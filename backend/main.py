@@ -11,8 +11,8 @@ load_dotenv()
 from database import init_db, get_connection
 from models import (
     UserRegister, UserLogin, Token,
-    FoodLogRequest, FoodLogResponse, DailyReport,
-    HistoryEntry, HistoryReport,
+    FoodLogRequest, FoodLogResponse, DailyReport, MacroTotals,
+    HistoryEntry, HistoryReport, UserSettings, UserSettingsUpdate,
 )
 from auth import hash_password, verify_password, create_access_token, get_current_user_id
 from gemini import fetch_calories
@@ -57,8 +57,8 @@ def register(body: UserRegister):
 
         password_hash = hash_password(body.password)
         cursor = conn.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-            (body.username.strip(), body.email.lower().strip(), password_hash)
+            "INSERT INTO users (username, email, password_hash, calorie_goal) VALUES (?, ?, ?, ?)",
+            (body.username.strip(), body.email.lower().strip(), password_hash, body.calorie_goal)
         )
         conn.commit()
         user_id = cursor.lastrowid
@@ -66,7 +66,7 @@ def register(body: UserRegister):
         conn.close()
 
     token = create_access_token({"sub": str(user_id)})
-    return Token(access_token=token, user_id=user_id, username=body.username.strip())
+    return Token(access_token=token, user_id=user_id, username=body.username.strip(), calorie_goal=body.calorie_goal)
 
 
 @app.post("/auth/login", response_model=Token, tags=["Auth"])
@@ -74,7 +74,7 @@ def login(body: UserLogin):
     conn = get_connection()
     try:
         user = conn.execute(
-            "SELECT id, username, password_hash FROM users WHERE email = ?",
+            "SELECT id, username, password_hash, calorie_goal FROM users WHERE email = ?",
             (body.email.lower().strip(),)
         ).fetchone()
     finally:
@@ -84,7 +84,7 @@ def login(body: UserLogin):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token({"sub": str(user["id"])})
-    return Token(access_token=token, user_id=user["id"], username=user["username"])
+    return Token(access_token=token, user_id=user["id"], username=user["username"], calorie_goal=user["calorie_goal"])
 
 
 # ── Food Logging ──────────────────────────────────────────────────────────────
@@ -97,12 +97,15 @@ def log_food(body: FoodLogRequest, user_id: int = Depends(get_current_user_id)):
     conn = get_connection()
     try:
         cursor = conn.execute(
-            """INSERT INTO calorie_logs (user_id, food_item, calories, serving_size, notes)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO calorie_logs (user_id, food_item, calories, protein, carbs, fats, serving_size, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id,
                 body.food_item,
                 calorie_data["calories"],
+                calorie_data["protein"],
+                calorie_data["carbs"],
+                calorie_data["fats"],
                 calorie_data["serving_size"],
                 calorie_data["notes"],
             )
@@ -117,6 +120,9 @@ def log_food(body: FoodLogRequest, user_id: int = Depends(get_current_user_id)):
         id=row["id"],
         food_item=row["food_item"],
         calories=row["calories"],
+        protein=row["protein"],
+        carbs=row["carbs"],
+        fats=row["fats"],
         serving_size=row["serving_size"],
         notes=row["notes"],
         logged_at=row["logged_at"],
@@ -142,14 +148,22 @@ def get_today(user_id: int = Depends(get_current_user_id)):
             id=r["id"],
             food_item=r["food_item"],
             calories=r["calories"],
+            protein=r["protein"] if "protein" in r.keys() else 0,
+            carbs=r["carbs"] if "carbs" in r.keys() else 0,
+            fats=r["fats"] if "fats" in r.keys() else 0,
             serving_size=r["serving_size"],
             notes=r["notes"],
             logged_at=r["logged_at"],
         )
         for r in rows
     ]
-    total = sum(l.calories for l in logs)
-    return DailyReport(date=today, logs=logs, total_calories=total)
+    total_calories = sum(l.calories for l in logs)
+    total_macros = MacroTotals(
+        protein=sum(l.protein for l in logs),
+        carbs=sum(l.carbs for l in logs),
+        fats=sum(l.fats for l in logs)
+    )
+    return DailyReport(date=today, logs=logs, total_calories=total_calories, total_macros=total_macros)
 
 
 @app.delete("/food/log/{log_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Food"])
@@ -186,7 +200,10 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
             for i in range(6, -1, -1):
                 d = today - timedelta(days=i)
                 row = conn.execute(
-                    """SELECT COALESCE(SUM(calories), 0) as total
+                    """SELECT COALESCE(SUM(calories), 0) as total,
+                              COALESCE(SUM(protein), 0) as protein,
+                              COALESCE(SUM(carbs), 0) as carbs,
+                              COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
                        WHERE user_id = ? AND date(logged_at) = ?""",
                     (user_id, d.isoformat())
@@ -194,7 +211,8 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                 entries.append(HistoryEntry(
                     label=d.strftime("%a"),
                     date=d.isoformat(),
-                    total_calories=row["total"]
+                    total_calories=row["total"],
+                    total_macros=MacroTotals(protein=row["protein"], carbs=row["carbs"], fats=row["fats"])
                 ))
 
         elif period == "monthly":
@@ -203,7 +221,10 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                 week_end = today - timedelta(days=week * 7)
                 week_start = week_end - timedelta(days=6)
                 row = conn.execute(
-                    """SELECT COALESCE(SUM(calories), 0) as total
+                    """SELECT COALESCE(SUM(calories), 0) as total,
+                              COALESCE(SUM(protein), 0) as protein,
+                              COALESCE(SUM(carbs), 0) as carbs,
+                              COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
                        WHERE user_id = ?
                          AND date(logged_at) BETWEEN ? AND ?""",
@@ -212,7 +233,8 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                 entries.append(HistoryEntry(
                     label=f"Week {4 - week}",
                     date=week_start.isoformat(),
-                    total_calories=row["total"]
+                    total_calories=row["total"],
+                    total_macros=MacroTotals(protein=row["protein"], carbs=row["carbs"], fats=row["fats"])
                 ))
 
         elif period == "yearly":
@@ -226,7 +248,10 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                     target_year -= 1
                 month_str = f"{target_year}-{target_month:02d}"
                 row = conn.execute(
-                    """SELECT COALESCE(SUM(calories), 0) as total
+                    """SELECT COALESCE(SUM(calories), 0) as total,
+                              COALESCE(SUM(protein), 0) as protein,
+                              COALESCE(SUM(carbs), 0) as carbs,
+                              COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
                        WHERE user_id = ?
                          AND strftime('%Y-%m', logged_at) = ?""",
@@ -235,9 +260,41 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                 entries.append(HistoryEntry(
                     label=datetime.strptime(month_str, "%Y-%m").strftime("%b"),
                     date=f"{month_str}-01",
-                    total_calories=row["total"]
+                    total_calories=row["total"],
+                    total_macros=MacroTotals(protein=row["protein"], carbs=row["carbs"], fats=row["fats"])
                 ))
     finally:
         conn.close()
 
     return HistoryReport(period=period, entries=entries)
+
+
+# ── User Settings ─────────────────────────────────────────────────────────────
+
+@app.get("/user/settings", response_model=UserSettings, tags=["User"])
+def get_user_settings(user_id: int = Depends(get_current_user_id)):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT calorie_goal FROM users WHERE id = ?",
+            (user_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserSettings(calorie_goal=row["calorie_goal"])
+    finally:
+        conn.close()
+
+
+@app.put("/user/settings", response_model=UserSettings, tags=["User"])
+def update_user_settings(body: UserSettingsUpdate, user_id: int = Depends(get_current_user_id)):
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET calorie_goal = ? WHERE id = ?",
+            (body.calorie_goal, user_id)
+        )
+        conn.commit()
+        return UserSettings(calorie_goal=body.calorie_goal)
+    finally:
+        conn.close()

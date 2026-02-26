@@ -17,17 +17,25 @@ export function AuthProvider({ children }) {
         setUser(userData);
     };
 
-    const register = useCallback(async (username, email, password) => {
-        const { data } = await api.post('/auth/register', { username, email, password });
-        saveSession(data.access_token, { id: data.user_id, username: data.username, email });
+    const register = useCallback(async (username, email, password, calorieGoal = 2000) => {
+        const { data } = await api.post('/auth/register', { username, email, password, calorie_goal: calorieGoal });
+        saveSession(data.access_token, { id: data.user_id, username: data.username, email, calorieGoal: data.calorie_goal });
         return data;
     }, []);
 
     const login = useCallback(async (email, password) => {
         const { data } = await api.post('/auth/login', { email, password });
-        saveSession(data.access_token, { id: data.user_id, username: data.username, email });
+        saveSession(data.access_token, { id: data.user_id, username: data.username, email, calorieGoal: data.calorie_goal });
         return data;
     }, []);
+
+    const updateSettings = useCallback(async (calorieGoal) => {
+        const { data } = await api.put('/user/settings', { calorie_goal: calorieGoal });
+        const updated = { ...user, calorieGoal: data.calorie_goal };
+        localStorage.setItem('ct_user', JSON.stringify(updated));
+        setUser(updated);
+        return data;
+    }, [user]);
 
     const logout = useCallback(() => {
         localStorage.removeItem('ct_token');
@@ -36,7 +44,7 @@ export function AuthProvider({ children }) {
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, login, logout, register }}>
+        <AuthContext.Provider value={{ user, login, logout, register, updateSettings }}>
             {children}
         </AuthContext.Provider>
     );

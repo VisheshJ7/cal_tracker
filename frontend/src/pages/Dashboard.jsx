@@ -3,20 +3,24 @@ import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import Navbar from '../components/Navbar';
 import {
-    Flame, Plus, Trash2, Apple, RefreshCw, Target, TrendingUp, Utensils
+    Flame, Plus, Trash2, Apple, RefreshCw, Target, TrendingUp, Utensils, Settings, X
 } from 'lucide-react';
 
-const DAILY_GOAL = 2000;
-
 export default function Dashboard() {
-    const { user } = useAuth();
+    const { user, updateSettings } = useAuth();
     const [foodInput, setFoodInput] = useState('');
     const [logs, setLogs] = useState([]);
     const [totalCalories, setTotalCalories] = useState(0);
+    const [totalMacros, setTotalMacros] = useState({ protein: 0, carbs: 0, fats: 0 });
     const [loading, setLoading] = useState(false);
     const [fetching, setFetching] = useState(true);
     const [error, setError] = useState('');
     const [lastAdded, setLastAdded] = useState(null);
+    const [showGoalModal, setShowGoalModal] = useState(false);
+    const [newGoal, setNewGoal] = useState(user?.calorieGoal || 2000);
+    const [savingGoal, setSavingGoal] = useState(false);
+
+    const dailyGoal = user?.calorieGoal || 2000;
 
     const fetchToday = useCallback(async () => {
         try {
@@ -24,6 +28,7 @@ export default function Dashboard() {
             const { data } = await api.get('/food/today');
             setLogs(data.logs);
             setTotalCalories(data.total_calories);
+            setTotalMacros(data.total_macros || { protein: 0, carbs: 0, fats: 0 });
         } catch (e) {
             console.error(e);
         } finally {
@@ -32,6 +37,19 @@ export default function Dashboard() {
     }, []);
 
     useEffect(() => { fetchToday(); }, [fetchToday]);
+
+    const handleSaveGoal = async () => {
+        if (newGoal < 500 || newGoal > 10000) return;
+        setSavingGoal(true);
+        try {
+            await updateSettings(newGoal);
+            setShowGoalModal(false);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setSavingGoal(false);
+        }
+    };
 
     const handleLog = async (e) => {
         e.preventDefault();
@@ -42,6 +60,11 @@ export default function Dashboard() {
             const { data } = await api.post('/food/log', { food_item: foodInput.trim() });
             setLogs((prev) => [data, ...prev]);
             setTotalCalories((prev) => prev + data.calories);
+            setTotalMacros((prev) => ({
+                protein: prev.protein + (data.protein || 0),
+                carbs: prev.carbs + (data.carbs || 0),
+                fats: prev.fats + (data.fats || 0)
+            }));
             setLastAdded(data);
             setFoodInput('');
         } catch (err) {
@@ -51,19 +74,24 @@ export default function Dashboard() {
         }
     };
 
-    const handleDelete = async (id, calories) => {
+    const handleDelete = async (id, calories, protein = 0, carbs = 0, fats = 0) => {
         try {
             await api.delete(`/food/log/${id}`);
             setLogs((prev) => prev.filter((l) => l.id !== id));
             setTotalCalories((prev) => Math.max(0, prev - calories));
+            setTotalMacros((prev) => ({
+                protein: Math.max(0, prev.protein - protein),
+                carbs: Math.max(0, prev.carbs - carbs),
+                fats: Math.max(0, prev.fats - fats)
+            }));
             if (lastAdded?.id === id) setLastAdded(null);
         } catch (e) {
             console.error(e);
         }
     };
 
-    const percentage = Math.min((totalCalories / DAILY_GOAL) * 100, 100);
-    const remaining = Math.max(DAILY_GOAL - totalCalories, 0);
+    const percentage = Math.min((totalCalories / dailyGoal) * 100, 100);
+    const remaining = Math.max(dailyGoal - totalCalories, 0);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
     const progressColor = percentage > 90 ? '#ef4444' : percentage > 70 ? '#f59e0b' : '#6366f1';
@@ -91,11 +119,11 @@ export default function Dashboard() {
                             <span className="stat-label">Calories Today</span>
                         </div>
                     </div>
-                    <div className="stat-card">
+                    <div className="stat-card clickable" onClick={() => { setNewGoal(dailyGoal); setShowGoalModal(true); }}>
                         <div className="stat-icon secondary-icon"><Target size={24} /></div>
                         <div className="stat-info">
-                            <span className="stat-value">{DAILY_GOAL}</span>
-                            <span className="stat-label">Daily Goal</span>
+                            <span className="stat-value">{dailyGoal}</span>
+                            <span className="stat-label">Daily Goal <Settings size={12} style={{ marginLeft: 4, opacity: 0.6 }} /></span>
                         </div>
                     </div>
                     <div className="stat-card">
@@ -114,6 +142,22 @@ export default function Dashboard() {
                     </div>
                 </div>
 
+                {/* Macros Summary */}
+                <div className="macros-grid">
+                    <div className="macro-card protein">
+                        <span className="macro-label">Protein</span>
+                        <span className="macro-value">{totalMacros.protein.toFixed(1)}g</span>
+                    </div>
+                    <div className="macro-card carbs">
+                        <span className="macro-label">Carbs</span>
+                        <span className="macro-value">{totalMacros.carbs.toFixed(1)}g</span>
+                    </div>
+                    <div className="macro-card fats">
+                        <span className="macro-label">Fats</span>
+                        <span className="macro-value">{totalMacros.fats.toFixed(1)}g</span>
+                    </div>
+                </div>
+
                 {/* Progress Bar */}
                 <div className="progress-card">
                     <div className="progress-header">
@@ -128,7 +172,7 @@ export default function Dashboard() {
                     </div>
                     <div className="progress-footer">
                         <span>{totalCalories.toFixed(0)} kcal consumed</span>
-                        <span>{DAILY_GOAL} kcal goal</span>
+                        <span>{dailyGoal} kcal goal</span>
                     </div>
                 </div>
 
@@ -184,6 +228,9 @@ export default function Dashboard() {
                                         <div className="food-details">
                                             <span className="food-name">{log.food_item}</span>
                                             <span className="food-meta">{log.serving_size}</span>
+                                            <span className="food-macros">
+                                                P: {(log.protein || 0).toFixed(1)}g • C: {(log.carbs || 0).toFixed(1)}g • F: {(log.fats || 0).toFixed(1)}g
+                                            </span>
                                             {log.notes && <span className="food-notes">{log.notes}</span>}
                                         </div>
                                     </div>
@@ -194,7 +241,7 @@ export default function Dashboard() {
                                         </span>
                                         <button
                                             className="delete-btn"
-                                            onClick={() => handleDelete(log.id, log.calories)}
+                                            onClick={() => handleDelete(log.id, log.calories, log.protein, log.carbs, log.fats)}
                                             title="Remove"
                                         >
                                             <Trash2 size={16} />
@@ -205,6 +252,38 @@ export default function Dashboard() {
                         </div>
                     )}
                 </div>
+
+                {/* Goal Edit Modal */}
+                {showGoalModal && (
+                    <div className="modal-overlay" onClick={() => setShowGoalModal(false)}>
+                        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <h3>Edit Daily Goal</h3>
+                                <button className="modal-close" onClick={() => setShowGoalModal(false)}>
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <div className="modal-body">
+                                <label>Daily Calorie Goal</label>
+                                <input
+                                    type="number"
+                                    value={newGoal}
+                                    onChange={(e) => setNewGoal(parseInt(e.target.value) || 0)}
+                                    min={500}
+                                    max={10000}
+                                    className="goal-input"
+                                />
+                                <span className="form-hint">Recommended: 1500-3000 kcal depending on your goals</span>
+                            </div>
+                            <div className="modal-footer">
+                                <button className="btn-secondary" onClick={() => setShowGoalModal(false)}>Cancel</button>
+                                <button className="btn-primary" onClick={handleSaveGoal} disabled={savingGoal}>
+                                    {savingGoal ? <span className="btn-spinner small" /> : 'Save'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main>
         </div>
     );

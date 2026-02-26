@@ -9,6 +9,7 @@ class UserRegister(BaseModel):
     username: str
     email: str
     password: str
+    calorie_goal: Optional[int] = 2000
 
     @field_validator("username")
     @classmethod
@@ -35,6 +36,7 @@ class Token(BaseModel):
     token_type: str = "bearer"
     user_id: int
     username: str
+    calorie_goal: int
 
 
 # ── Food ──────────────────────────────────────────────────────────────────────
@@ -54,23 +56,44 @@ class FoodLogResponse(BaseModel):
     id: int
     food_item: str
     calories: float
+    protein: float
+    carbs: float
+    fats: float
     serving_size: str
     notes: str
     logged_at: str
+
+
+class MacroTotals(BaseModel):
+    protein: float
+    carbs: float
+    fats: float
 
 
 class DailyReport(BaseModel):
     date: str
     logs: List[FoodLogResponse]
     total_calories: float
+    total_macros: MacroTotals
 
 
 class HistoryEntry(BaseModel):
     label: str       # e.g. "Mon", "Week 1", "Jan"
     date: str        # ISO date of the period start
     total_calories: float
+    total_macros: MacroTotals
 
 
 class HistoryReport(BaseModel):
     period: str      # weekly | monthly | yearly
     entries: List[HistoryEntry]
+
+
+# ── User Settings ─────────────────────────────────────────────────────────────
+
+class UserSettings(BaseModel):
+    calorie_goal: int
+
+
+class UserSettingsUpdate(BaseModel):
+    calorie_goal: int

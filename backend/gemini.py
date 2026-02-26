@@ -13,8 +13,8 @@ API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 def fetch_calories(food_item: str) -> dict:
     """
-    Ask Gemini for calorie info about a food item.
-    Returns: { "calories": float, "serving_size": str, "notes": str }
+    Ask Gemini for calorie and macro info about a food item.
+    Returns: { "calories": float, "protein": float, "carbs": float, "fats": float, "serving_size": str, "notes": str }
     """
     if not API_KEY:
         raise HTTPException(status_code=503, detail="Gemini API key not configured")
@@ -23,6 +23,9 @@ def fetch_calories(food_item: str) -> dict:
         f"You are a precise nutrition expert database. "
         f"For the food item: \"{food_item}\", return ONLY a valid JSON object with these exact keys:\n"
         f"  - \"calories\": a number (kcal for a standard/common serving)\n"
+        f"  - \"protein\": a number (grams of protein for the serving)\n"
+        f"  - \"carbs\": a number (grams of carbohydrates for the serving)\n"
+        f"  - \"fats\": a number (grams of fat for the serving)\n"
         f"  - \"serving_size\": a string describing the serving (e.g. \"1 medium apple (182g)\")\n"
         f"  - \"notes\": a single-sentence note about the food\n\n"
         f"Return ONLY the JSON object, no markdown, no explanation, no extra text."
@@ -44,13 +47,23 @@ def fetch_calories(food_item: str) -> dict:
         data = json.loads(raw)
 
         calories = float(data.get("calories", 0))
+        protein = float(data.get("protein", 0))
+        carbs = float(data.get("carbs", 0))
+        fats = float(data.get("fats", 0))
         serving_size = str(data.get("serving_size", "1 serving"))
         notes = str(data.get("notes", ""))
 
         if calories <= 0:
             raise ValueError("calories must be positive")
 
-        return {"calories": calories, "serving_size": serving_size, "notes": notes}
+        return {
+            "calories": calories,
+            "protein": protein,
+            "carbs": carbs,
+            "fats": fats,
+            "serving_size": serving_size,
+            "notes": notes
+        }
 
     except (json.JSONDecodeError, ValueError, KeyError) as e:
         raise HTTPException(
