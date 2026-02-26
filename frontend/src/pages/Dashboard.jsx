@@ -3,7 +3,7 @@ import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import Navbar from '../components/Navbar';
 import {
-    Flame, Plus, Trash2, Apple, RefreshCw, Target, TrendingUp, Utensils, Settings, X
+    Flame, Plus, Trash2, Apple, RefreshCw, Target, TrendingUp, Utensils, Settings, X, Dumbbell, Minus
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -12,6 +12,7 @@ export default function Dashboard() {
     const [logs, setLogs] = useState([]);
     const [totalCalories, setTotalCalories] = useState(0);
     const [totalMacros, setTotalMacros] = useState({ protein: 0, carbs: 0, fats: 0 });
+    const [caloriesBurnt, setCaloriesBurnt] = useState(0);
     const [loading, setLoading] = useState(false);
     const [fetching, setFetching] = useState(true);
     const [error, setError] = useState('');
@@ -25,10 +26,14 @@ export default function Dashboard() {
     const fetchToday = useCallback(async () => {
         try {
             setFetching(true);
-            const { data } = await api.get('/food/today');
-            setLogs(data.logs);
-            setTotalCalories(data.total_calories);
-            setTotalMacros(data.total_macros || { protein: 0, carbs: 0, fats: 0 });
+            const [foodRes, exerciseRes] = await Promise.all([
+                api.get('/food/today'),
+                api.get('/exercises/today')
+            ]);
+            setLogs(foodRes.data.logs);
+            setTotalCalories(foodRes.data.total_calories);
+            setTotalMacros(foodRes.data.total_macros || { protein: 0, carbs: 0, fats: 0 });
+            setCaloriesBurnt(exerciseRes.data.total_calories_burnt);
         } catch (e) {
             console.error(e);
         } finally {
@@ -90,8 +95,9 @@ export default function Dashboard() {
         }
     };
 
-    const percentage = Math.min((totalCalories / dailyGoal) * 100, 100);
-    const remaining = Math.max(dailyGoal - totalCalories, 0);
+    const netCalories = totalCalories - caloriesBurnt;
+    const percentage = Math.min((netCalories / dailyGoal) * 100, 100);
+    const remaining = Math.max(dailyGoal - netCalories, 0);
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
     const progressColor = percentage > 90 ? '#ef4444' : percentage > 70 ? '#f59e0b' : '#6366f1';
@@ -116,14 +122,30 @@ export default function Dashboard() {
                         <div className="stat-icon"><Flame size={24} /></div>
                         <div className="stat-info">
                             <span className="stat-value">{totalCalories.toFixed(0)}</span>
-                            <span className="stat-label">Calories Today</span>
+                            <span className="stat-label">Consumed</span>
+                        </div>
+                    </div>
+                    <div className="stat-card burnt-card">
+                        <div className="stat-icon burnt-icon"><Dumbbell size={24} /></div>
+                        <div className="stat-info">
+                            <span className="stat-value flex-value">
+                                <Minus size={14} className="minus-sign" /> {caloriesBurnt.toFixed(0)}
+                            </span>
+                            <span className="stat-label">Burnt</span>
+                        </div>
+                    </div>
+                    <div className="stat-card net-card">
+                        <div className="stat-icon net-icon"><TrendingUp size={24} /></div>
+                        <div className="stat-info">
+                            <span className="stat-value">{netCalories.toFixed(0)}</span>
+                            <span className="stat-label">Net Calories</span>
                         </div>
                     </div>
                     <div className="stat-card clickable" onClick={() => { setNewGoal(dailyGoal); setShowGoalModal(true); }}>
                         <div className="stat-icon secondary-icon"><Target size={24} /></div>
                         <div className="stat-info">
                             <span className="stat-value">{dailyGoal}</span>
-                            <span className="stat-label">Daily Goal <Settings size={12} style={{ marginLeft: 4, opacity: 0.6 }} /></span>
+                            <span className="stat-label">Goal <Settings size={12} style={{ marginLeft: 4, opacity: 0.6 }} /></span>
                         </div>
                     </div>
                     <div className="stat-card">
@@ -171,7 +193,7 @@ export default function Dashboard() {
                         />
                     </div>
                     <div className="progress-footer">
-                        <span>{totalCalories.toFixed(0)} kcal consumed</span>
+                        <span>{netCalories.toFixed(0)} kcal net ({totalCalories.toFixed(0)} - {caloriesBurnt.toFixed(0)})</span>
                         <span>{dailyGoal} kcal goal</span>
                     </div>
                 </div>

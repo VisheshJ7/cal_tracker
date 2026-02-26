@@ -117,3 +117,43 @@ class UserSettings(BaseModel):
 
 class UserSettingsUpdate(BaseModel):
     calorie_goal: int
+
+
+# ── Exercise ──────────────────────────────────────────────────────────────────
+
+class ExerciseInfo(BaseModel):
+    name: str
+    calories_per_kg_per_hour: float
+
+
+class ExerciseLogRequest(BaseModel):
+    exercise_name: str
+    duration_minutes: float
+
+    @field_validator("exercise_name")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("exercise_name cannot be empty")
+        return v.strip()
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def positive_duration(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("duration_minutes must be positive")
+        return v
+
+
+class ExerciseLogResponse(BaseModel):
+    id: int
+    exercise_name: str
+    duration_minutes: float
+    calories_burnt: float
+    logged_at: str
+
+
+class DailyExerciseReport(BaseModel):
+    date: str
+    logs: List[ExerciseLogResponse]
+    total_calories_burnt: float

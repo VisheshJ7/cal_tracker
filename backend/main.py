@@ -1,6 +1,7 @@
 import os
+import csv
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, status
@@ -14,11 +15,36 @@ from models import (
     FoodLogRequest, FoodLogResponse, DailyReport, MacroTotals,
     HistoryEntry, HistoryReport, UserSettings, UserSettingsUpdate,
     OnboardingData, OnboardingResponse,
+    ExerciseInfo, ExerciseLogRequest, ExerciseLogResponse, DailyExerciseReport,
 )
 from auth import hash_password, verify_password, create_access_token, get_current_user_id
 from gemini import fetch_calories
 
 app = FastAPI(title="Calorie Tracker API", version="1.0.0")
+
+# Load exercise dataset once at startup
+EXERCISE_DATA: dict[str, float] = {}
+
+def load_exercise_dataset():
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "exercise_dataset.csv")
+    if not os.path.exists(csv_path):
+        print(f"Warning: exercise_dataset.csv not found at {csv_path}")
+        return
+    
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            exercise_name = row["Activity, Exercise or Sport (1 hour)"].strip('"')
+            # Calculate calories per kg per hour from the 155 lb column
+            # 155 lb = 70.31 kg, so: cal_per_kg = cal_at_155lb / 70.31
+            # The dataset's "Calories per kg" column has incorrect values
+            try:
+                cal_at_155lb = float(row["155 lb"])
+                cal_per_kg_per_hour = cal_at_155lb / 70.31
+                EXERCISE_DATA[exercise_name] = cal_per_kg_per_hour
+            except (ValueError, KeyError):
+                continue
+    print(f"Loaded {len(EXERCISE_DATA)} exercises from dataset")
 
 # CORS – allow the Vite dev server and any production origin
 app.add_middleware(
@@ -33,6 +59,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    load_exercise_dataset()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -143,7 +170,7 @@ def get_today(user_id: int = Depends(get_current_user_id)):
     try:
         rows = conn.execute(
             """SELECT * FROM calorie_logs
-               WHERE user_id = ? AND date(logged_at) = ?
+               WHERE user_id = ? AND date(logged_at, 'localtime') = ?
                ORDER BY logged_at DESC""",
             (user_id, today)
         ).fetchall()
@@ -212,7 +239,7 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                               COALESCE(SUM(carbs), 0) as carbs,
                               COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
-                       WHERE user_id = ? AND date(logged_at) = ?""",
+                       WHERE user_id = ? AND date(logged_at, 'localtime') = ?""",
                     (user_id, d.isoformat())
                 ).fetchone()
                 entries.append(HistoryEntry(
@@ -234,7 +261,7 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                               COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
                        WHERE user_id = ?
-                         AND date(logged_at) BETWEEN ? AND ?""",
+                         AND date(logged_at, 'localtime') BETWEEN ? AND ?""",
                     (user_id, week_start.isoformat(), week_end.isoformat())
                 ).fetchone()
                 entries.append(HistoryEntry(
@@ -261,7 +288,7 @@ def get_history(period: str = "weekly", user_id: int = Depends(get_current_user_
                               COALESCE(SUM(fats), 0) as fats
                        FROM calorie_logs
                        WHERE user_id = ?
-                         AND strftime('%Y-%m', logged_at) = ?""",
+                         AND strftime('%Y-%m', logged_at, 'localtime') = ?""",
                     (user_id, month_str)
                 ).fetchone()
                 entries.append(HistoryEntry(
@@ -367,3 +394,105 @@ def complete_onboarding(body: OnboardingData, user_id: int = Depends(get_current
         calorie_goal=recommended_goal,
         weekly_change=weekly_change
     )
+
+
+# ── Exercise Tracking ─────────────────────────────────────────────────────────
+
+@app.get("/exercises/list", response_model=List[ExerciseInfo], tags=["Exercise"])
+def list_exercises(search: str = ""):
+    """Get list of available exercises, optionally filtered by search term"""
+    results = []
+    search_lower = search.lower()
+    for name, cal_per_kg in EXERCISE_DATA.items():
+        if not search or search_lower in name.lower():
+            results.append(ExerciseInfo(name=name, calories_per_kg_per_hour=cal_per_kg))
+    return results[:50]  # Limit to 50 results
+
+
+@app.post("/exercises/log", response_model=ExerciseLogResponse, status_code=status.HTTP_201_CREATED, tags=["Exercise"])
+def log_exercise(body: ExerciseLogRequest, user_id: int = Depends(get_current_user_id)):
+    """Log an exercise session"""
+    # Get calories per kg for this exercise
+    cal_per_kg = EXERCISE_DATA.get(body.exercise_name)
+    if cal_per_kg is None:
+        raise HTTPException(status_code=400, detail=f"Unknown exercise: {body.exercise_name}")
+    
+    # Get user's weight
+    conn = get_connection()
+    try:
+        user = conn.execute("SELECT weight FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user or not user["weight"]:
+            raise HTTPException(status_code=400, detail="Please complete onboarding to set your weight")
+        
+        user_weight_kg = user["weight"]
+        
+        # Calculate calories burnt
+        # Formula: weight_kg * calories_per_kg_per_hour * (duration_minutes / 60)
+        hours = body.duration_minutes / 60
+        calories_burnt = user_weight_kg * cal_per_kg * hours
+        
+        cursor = conn.execute(
+            """INSERT INTO exercise_logs (user_id, exercise_name, duration_minutes, calories_burnt)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, body.exercise_name, body.duration_minutes, round(calories_burnt, 1))
+        )
+        conn.commit()
+        log_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM exercise_logs WHERE id = ?", (log_id,)).fetchone()
+    finally:
+        conn.close()
+    
+    return ExerciseLogResponse(
+        id=row["id"],
+        exercise_name=row["exercise_name"],
+        duration_minutes=row["duration_minutes"],
+        calories_burnt=row["calories_burnt"],
+        logged_at=row["logged_at"]
+    )
+
+
+@app.get("/exercises/today", response_model=DailyExerciseReport, tags=["Exercise"])
+def get_today_exercises(user_id: int = Depends(get_current_user_id)):
+    """Get today's exercise logs"""
+    today = date.today().isoformat()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM exercise_logs
+               WHERE user_id = ? AND date(logged_at, 'localtime') = ?
+               ORDER BY logged_at DESC""",
+            (user_id, today)
+        ).fetchall()
+    finally:
+        conn.close()
+    
+    logs = [
+        ExerciseLogResponse(
+            id=r["id"],
+            exercise_name=r["exercise_name"],
+            duration_minutes=r["duration_minutes"],
+            calories_burnt=r["calories_burnt"],
+            logged_at=r["logged_at"]
+        )
+        for r in rows
+    ]
+    total_burnt = sum(l.calories_burnt for l in logs)
+    
+    return DailyExerciseReport(date=today, logs=logs, total_calories_burnt=total_burnt)
+
+
+@app.delete("/exercises/log/{log_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Exercise"])
+def delete_exercise_log(log_id: int, user_id: int = Depends(get_current_user_id)):
+    """Delete an exercise log entry"""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM exercise_logs WHERE id = ? AND user_id = ?",
+            (log_id, user_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Exercise log not found")
+        conn.execute("DELETE FROM exercise_logs WHERE id = ?", (log_id,))
+        conn.commit()
+    finally:
+        conn.close()

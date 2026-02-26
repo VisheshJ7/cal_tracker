@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, BarChart3, MessageSquare, LogOut, Flame } from 'lucide-react';
+import { LayoutDashboard, BarChart3, MessageSquare, LogOut, Flame, Dumbbell } from 'lucide-react';
 
 export default function Navbar() {
     const { user, logout } = useAuth();
@@ -13,6 +13,7 @@ export default function Navbar() {
 
     const navItems = [
         { to: '/', icon: <LayoutDashboard size={20} />, label: 'Dashboard' },
+        { to: '/exercise', icon: <Dumbbell size={20} />, label: 'Exercise' },
         { to: '/reports', icon: <BarChart3 size={20} />, label: 'Reports' },
         { to: '/chat', icon: <MessageSquare size={20} />, label: 'AI Chat' },
     ];

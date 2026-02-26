@@ -73,5 +73,17 @@ def init_db():
         except:
             pass  # Column already exists
 
+    # Exercise logs table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exercise_logs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            exercise_name   TEXT    NOT NULL,
+            duration_minutes REAL   NOT NULL,
+            calories_burnt  REAL    NOT NULL,
+            logged_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
