@@ -9,7 +9,6 @@ class UserRegister(BaseModel):
     username: str
     email: str
     password: str
-    calorie_goal: Optional[int] = 2000
 
     @field_validator("username")
     @classmethod
@@ -27,7 +26,7 @@ class UserRegister(BaseModel):
 
 
 class UserLogin(BaseModel):
-    email: str
+    username: str
     password: str
 
 
@@ -37,6 +36,27 @@ class Token(BaseModel):
     user_id: int
     username: str
     calorie_goal: int
+    onboarding_completed: bool
+
+
+# ── Onboarding ────────────────────────────────────────────────────────────
+
+class OnboardingData(BaseModel):
+    gender: str  # 'male' or 'female'
+    age: int
+    height: float  # in cm
+    weight: float  # in kg
+    activity_level: str  # 'sedentary', 'light', 'moderate', 'active', 'very_active'
+    goal: str  # 'lose', 'maintain', 'gain'
+    weight_change_per_week: Optional[float] = 0.5  # kg per week (positive for both lose/gain)
+
+
+class OnboardingResponse(BaseModel):
+    maintenance_calories: int
+    recommended_goal: int
+    calorie_goal: int
+    weekly_change: float  # kg per week
+    time_to_goal: Optional[str] = None  # estimated time to reach target
 
 
 # ── Food ──────────────────────────────────────────────────────────────────────

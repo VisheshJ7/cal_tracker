@@ -25,15 +25,30 @@ def init_db():
             email       TEXT    NOT NULL UNIQUE,
             password_hash TEXT  NOT NULL,
             calorie_goal INTEGER NOT NULL DEFAULT 2000,
+            gender      TEXT    DEFAULT NULL,
+            age         INTEGER DEFAULT NULL,
+            height      REAL    DEFAULT NULL,
+            weight      REAL    DEFAULT NULL,
+            activity_level TEXT DEFAULT NULL,
+            onboarding_completed INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
 
-    # Add calorie_goal column if it doesn't exist (migration)
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN calorie_goal INTEGER NOT NULL DEFAULT 2000")
-    except:
-        pass  # Column already exists
+    # Add new columns if they don't exist (migration)
+    for col, col_type, default in [
+        ('calorie_goal', 'INTEGER', '2000'),
+        ('gender', 'TEXT', 'NULL'),
+        ('age', 'INTEGER', 'NULL'),
+        ('height', 'REAL', 'NULL'),
+        ('weight', 'REAL', 'NULL'),
+        ('activity_level', 'TEXT', 'NULL'),
+        ('onboarding_completed', 'INTEGER', '0'),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default}")
+        except:
+            pass  # Column already exists
 
     # Calorie logs table
     cursor.execute("""

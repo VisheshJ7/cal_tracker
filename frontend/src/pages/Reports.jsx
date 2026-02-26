@@ -214,7 +214,7 @@ export default function Reports() {
                                             <td><span className={`status-badge ${statusClass}`}>{status}</span></td>
                                         </tr>
                                     );
-                                })}}
+                                })}
                             </tbody>
                         </table>
                     </div>

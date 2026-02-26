@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Flame, User, Mail, Lock, Eye, EyeOff, Target } from 'lucide-react';
+import { Flame, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 export default function Register() {
-    const [form, setForm] = useState({ username: '', email: '', password: '', confirm: '', calorieGoal: 2000 });
+    const [form, setForm] = useState({ username: '', email: '', password: '', confirm: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -22,8 +22,9 @@ export default function Register() {
         }
         setLoading(true);
         try {
-            await register(form.username, form.email, form.password, form.calorieGoal);
-            navigate('/');
+            const data = await register(form.username, form.email, form.password);
+            // Redirect to onboarding for new users
+            navigate('/onboarding');
         } catch (err) {
             setError(err.response?.data?.detail || 'Registration failed. Please try again.');
         } finally {
@@ -117,24 +118,6 @@ export default function Register() {
                                 id="reg-confirm"
                             />
                         </div>
-                    </div>
-
-                    <div className="form-group">
-                        <label>Daily Calorie Goal</label>
-                        <div className="input-icon-wrap">
-                            <Target size={16} className="input-icon" />
-                            <input
-                                type="number"
-                                name="calorieGoal"
-                                placeholder="2000"
-                                value={form.calorieGoal}
-                                onChange={handleChange}
-                                min={500}
-                                max={10000}
-                                id="reg-calorie-goal"
-                            />
-                        </div>
-                        <span className="form-hint">You can change this later in settings</span>
                     </div>
 
                     <button type="submit" className="auth-btn" disabled={loading} id="reg-submit">

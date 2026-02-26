@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Flame, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Flame, User, Lock, Eye, EyeOff } from 'lucide-react';
 
 export default function Login() {
-    const [form, setForm] = useState({ email: '', password: '' });
+    const [form, setForm] = useState({ username: '', password: '' });
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -18,8 +18,13 @@ export default function Login() {
         setError('');
         setLoading(true);
         try {
-            await login(form.email, form.password);
-            navigate('/');
+            const data = await login(form.username, form.password);
+            // Redirect based on onboarding status
+            if (data.onboarding_completed) {
+                navigate('/');
+            } else {
+                navigate('/onboarding');
+            }
         } catch (err) {
             setError(err.response?.data?.detail || 'Login failed. Please try again.');
         } finally {
@@ -43,17 +48,17 @@ export default function Login() {
 
                 <form onSubmit={handleSubmit} className="auth-form">
                     <div className="form-group">
-                        <label>Email</label>
+                        <label>Username</label>
                         <div className="input-icon-wrap">
-                            <Mail size={16} className="input-icon" />
+                            <User size={16} className="input-icon" />
                             <input
-                                type="email"
-                                name="email"
-                                placeholder="you@example.com"
-                                value={form.email}
+                                type="text"
+                                name="username"
+                                placeholder="johndoe"
+                                value={form.username}
                                 onChange={handleChange}
                                 required
-                                id="login-email"
+                                id="login-username"
                             />
                         </div>
                     </div>

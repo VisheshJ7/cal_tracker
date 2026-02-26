@@ -1,7 +1,17 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-export default function ProtectedRoute({ children }) {
+export default function ProtectedRoute({ children, requireOnboarding = false }) {
     const { user } = useAuth();
-    return user ? children : <Navigate to="/login" replace />;
+    
+    if (!user) {
+        return <Navigate to="/login" replace />;
+    }
+    
+    // If this route requires onboarding and user hasn't completed it
+    if (requireOnboarding && !user.onboardingCompleted) {
+        return <Navigate to="/onboarding" replace />;
+    }
+    
+    return children;
 }

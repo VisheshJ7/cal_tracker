@@ -13,6 +13,7 @@ from models import (
     UserRegister, UserLogin, Token,
     FoodLogRequest, FoodLogResponse, DailyReport, MacroTotals,
     HistoryEntry, HistoryReport, UserSettings, UserSettingsUpdate,
+    OnboardingData, OnboardingResponse,
 )
 from auth import hash_password, verify_password, create_access_token, get_current_user_id
 from gemini import fetch_calories
@@ -57,8 +58,8 @@ def register(body: UserRegister):
 
         password_hash = hash_password(body.password)
         cursor = conn.execute(
-            "INSERT INTO users (username, email, password_hash, calorie_goal) VALUES (?, ?, ?, ?)",
-            (body.username.strip(), body.email.lower().strip(), password_hash, body.calorie_goal)
+            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+            (body.username.strip(), body.email.lower().strip(), password_hash)
         )
         conn.commit()
         user_id = cursor.lastrowid
@@ -66,7 +67,7 @@ def register(body: UserRegister):
         conn.close()
 
     token = create_access_token({"sub": str(user_id)})
-    return Token(access_token=token, user_id=user_id, username=body.username.strip(), calorie_goal=body.calorie_goal)
+    return Token(access_token=token, user_id=user_id, username=body.username.strip(), calorie_goal=2000, onboarding_completed=False)
 
 
 @app.post("/auth/login", response_model=Token, tags=["Auth"])
@@ -74,17 +75,23 @@ def login(body: UserLogin):
     conn = get_connection()
     try:
         user = conn.execute(
-            "SELECT id, username, password_hash, calorie_goal FROM users WHERE email = ?",
-            (body.email.lower().strip(),)
+            "SELECT id, username, password_hash, calorie_goal, onboarding_completed FROM users WHERE username = ?",
+            (body.username.strip(),)
         ).fetchone()
     finally:
         conn.close()
 
     if not user or not verify_password(body.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = create_access_token({"sub": str(user["id"])})
-    return Token(access_token=token, user_id=user["id"], username=user["username"], calorie_goal=user["calorie_goal"])
+    return Token(
+        access_token=token, 
+        user_id=user["id"], 
+        username=user["username"], 
+        calorie_goal=user["calorie_goal"],
+        onboarding_completed=bool(user["onboarding_completed"])
+    )
 
 
 # ── Food Logging ──────────────────────────────────────────────────────────────
@@ -298,3 +305,65 @@ def update_user_settings(body: UserSettingsUpdate, user_id: int = Depends(get_cu
         return UserSettings(calorie_goal=body.calorie_goal)
     finally:
         conn.close()
+
+
+# ── Onboarding ────────────────────────────────────────────────────────────────
+
+def calculate_maintenance_calories(gender: str, age: int, height: float, weight: float, activity_level: str) -> int:
+    """Calculate maintenance calories using Mifflin-St Jeor equation"""
+    if gender.lower() == 'male':
+        bmr = 10 * weight + 6.25 * height - 5 * age + 5
+    else:
+        bmr = 10 * weight + 6.25 * height - 5 * age - 161
+    
+    activity_multipliers = {
+        'sedentary': 1.2,
+        'light': 1.375,
+        'moderate': 1.55,
+        'active': 1.725,
+        'very_active': 1.9
+    }
+    multiplier = activity_multipliers.get(activity_level.lower(), 1.55)
+    return int(bmr * multiplier)
+
+
+@app.post("/user/onboarding", response_model=OnboardingResponse, tags=["User"])
+def complete_onboarding(body: OnboardingData, user_id: int = Depends(get_current_user_id)):
+    maintenance = calculate_maintenance_calories(
+        body.gender, body.age, body.height, body.weight, body.activity_level
+    )
+    
+    # Calculate calorie adjustment based on weekly weight change target
+    # 1 kg of body fat ≈ 7700 calories
+    weekly_change = body.weight_change_per_week or 0.5
+    
+    if body.goal.lower() == 'lose':
+        daily_deficit = (weekly_change * 7700) / 7  # Convert to daily
+        recommended_goal = max(1200, int(maintenance - daily_deficit))  # Minimum 1200
+    elif body.goal.lower() == 'gain':
+        daily_surplus = (weekly_change * 7700) / 7
+        recommended_goal = int(maintenance + min(daily_surplus, 1000))  # Cap surplus at 1000
+    else:  # maintain
+        weekly_change = 0
+        recommended_goal = maintenance
+    
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE users SET 
+               gender = ?, age = ?, height = ?, weight = ?, 
+               activity_level = ?, calorie_goal = ?, onboarding_completed = 1
+               WHERE id = ?""",
+            (body.gender, body.age, body.height, body.weight, 
+             body.activity_level, recommended_goal, user_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    
+    return OnboardingResponse(
+        maintenance_calories=maintenance,
+        recommended_goal=recommended_goal,
+        calorie_goal=recommended_goal,
+        weekly_change=weekly_change
+    )
